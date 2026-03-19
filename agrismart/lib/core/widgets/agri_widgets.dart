@@ -6,6 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
+// SeverityLevel + SeverityLevelX définis UNE SEULE FOIS dans le domain
+import '../../domain/entities/scan_result.dart';
+export '../../domain/entities/scan_result.dart' show SeverityLevel;
 
 // ════════════════════════════════════════════════════════════
 // AGRI BUTTON — Bouton principal très visible
@@ -160,47 +163,8 @@ class _AgriButtonState extends State<AgriButton>
 
 // ════════════════════════════════════════════════════════════
 // SEVERITY INDICATOR — Vert / Orange / Rouge
+// SeverityLevel vient du domain (scan_result.dart)
 // ════════════════════════════════════════════════════════════
-
-enum SeverityLevel { healthy, warning, danger, unknown }
-
-extension SeverityLevelX on SeverityLevel {
-  Color get color {
-    switch (this) {
-      case SeverityLevel.healthy: return AppColors.healthy;
-      case SeverityLevel.warning: return AppColors.warning;
-      case SeverityLevel.danger:  return AppColors.danger;
-      case SeverityLevel.unknown: return AppColors.textTertiary;
-    }
-  }
-
-  Color get backgroundColor {
-    switch (this) {
-      case SeverityLevel.healthy: return AppColors.healthyBg;
-      case SeverityLevel.warning: return AppColors.warningBg;
-      case SeverityLevel.danger:  return AppColors.dangerBg;
-      case SeverityLevel.unknown: return AppColors.border;
-    }
-  }
-
-  IconData get icon {
-    switch (this) {
-      case SeverityLevel.healthy: return Icons.check_circle_rounded;
-      case SeverityLevel.warning: return Icons.warning_rounded;
-      case SeverityLevel.danger:  return Icons.dangerous_rounded;
-      case SeverityLevel.unknown: return Icons.help_rounded;
-    }
-  }
-
-  String get label {
-    switch (this) {
-      case SeverityLevel.healthy: return 'Sain';
-      case SeverityLevel.warning: return 'Attention';
-      case SeverityLevel.danger:  return 'Danger';
-      case SeverityLevel.unknown: return 'Inconnu';
-    }
-  }
-}
 
 class SeverityIndicator extends StatelessWidget {
   const SeverityIndicator({

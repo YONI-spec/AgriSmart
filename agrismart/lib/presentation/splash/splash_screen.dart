@@ -1,5 +1,5 @@
 // lib/presentation/splash/splash_screen.dart
-// Écran de démarrage : logo + chargement modèle TFLite
+// Splash — continue vers l'accueil même si le modèle est absent
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -33,7 +33,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
       duration: const Duration(milliseconds: 900),
       vsync: this,
     );
-
     _textController = AnimationController(
       duration: const Duration(milliseconds: 600),
       vsync: this,
@@ -42,18 +41,15 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     _logoScale = Tween<double>(begin: 0.6, end: 1.0).animate(
       CurvedAnimation(parent: _logoController, curve: Curves.elasticOut),
     );
-
     _logoOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _logoController,
         curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
       ),
     );
-
     _textOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurveTween(curve: Curves.easeOut).animate(_textController),
     );
-
     _textSlide = Tween<Offset>(
       begin: const Offset(0, 0.3),
       end: Offset.zero,
@@ -71,15 +67,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     await Future.delayed(const Duration(milliseconds: 500));
     _textController.forward();
 
-    // Charger le modèle TFLite
+    // Tentative chargement modèle — NON-BLOQUANT
     await ref.read(tfliteLoaderProvider.notifier).loadModel();
 
-    // Attendre un minimum pour l'UX
-    await Future.delayed(const Duration(milliseconds: 600));
+    // Délai minimum pour que l'animation soit visible
+    await Future.delayed(const Duration(milliseconds: 800));
 
-    if (mounted) {
-      context.goNamed(RouteNames.homeName);
-    }
+    if (mounted) context.goNamed(RouteNames.homeName);
   }
 
   @override
@@ -95,13 +89,10 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
 
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: AppColors.splashGradient,
-        ),
+        decoration: const BoxDecoration(gradient: AppColors.splashGradient),
         child: SafeArea(
           child: Column(
             children: [
-              // ── Logo centré ─────────────────────────────────────
               Expanded(
                 child: Center(
                   child: Column(
@@ -110,15 +101,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                       // Logo animé
                       AnimatedBuilder(
                         animation: _logoController,
-                        builder: (context, child) {
-                          return Opacity(
-                            opacity: _logoOpacity.value,
-                            child: Transform.scale(
-                              scale: _logoScale.value,
-                              child: child,
-                            ),
-                          );
-                        },
+                        builder: (context, child) => Opacity(
+                          opacity: _logoOpacity.value,
+                          child: Transform.scale(
+                            scale: _logoScale.value,
+                            child: child,
+                          ),
+                        ),
                         child: Container(
                           width: 140,
                           height: 140,
@@ -133,10 +122,8 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                           ),
                         ),
                       ),
-
                       const SizedBox(height: 28),
-
-                      // Nom de l'app
+                      // Nom + slogan
                       SlideTransition(
                         position: _textSlide,
                         child: FadeTransition(
@@ -165,8 +152,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                   ),
                 ),
               ),
-
-              // ── Statut de chargement en bas ───────────────────
+              // Statut chargement en bas
               Padding(
                 padding: const EdgeInsets.only(bottom: 48),
                 child: _LoadingStatus(state: modelState),
@@ -183,55 +169,60 @@ class _LoadingStatus extends StatelessWidget {
   const _LoadingStatus({required this.state});
   final ModelLoadState state;
 
-  String get _message {
-    switch (state) {
-      case ModelLoadState.idle:
-        return 'Initialisation…';
-      case ModelLoadState.loading:
-        return 'Chargement du modèle IA…';
-      case ModelLoadState.ready:
-        return 'Prêt !';
-      case ModelLoadState.error:
-        return 'Erreur de chargement';
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (state == ModelLoadState.loading)
+    switch (state) {
+      case ModelLoadState.loading:
+        return Column(mainAxisSize: MainAxisSize.min, children: [
           SizedBox(
-            width: 28,
-            height: 28,
+            width: 24, height: 24,
             child: CircularProgressIndicator(
               strokeWidth: 2.5,
-              color: Colors.white.withOpacity(0.7),
+              color: Colors.white.withOpacity(0.8),
             ),
-          )
-        else if (state == ModelLoadState.ready)
-          Icon(
-            Icons.check_circle_rounded,
-            color: Colors.white.withOpacity(0.9),
-            size: 28,
-          )
-        else if (state == ModelLoadState.error)
-          Icon(
-            Icons.error_rounded,
-            color: Colors.red[200],
-            size: 28,
-          )
-        else
-          const SizedBox(height: 28),
-        const SizedBox(height: 12),
-        Text(
-          _message,
-          style: AppTextStyles.bodyMedium.copyWith(
-            color: Colors.white.withOpacity(0.75),
           ),
-        ),
-      ],
-    );
+          const SizedBox(height: 12),
+          Text('Chargement du modèle IA…',
+              style: TextStyle(color: Colors.white.withOpacity(0.75),
+                  fontSize: 15)),
+        ]);
+
+      case ModelLoadState.ready:
+        return Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.check_circle_rounded,
+              color: Colors.white.withOpacity(0.9), size: 26),
+          const SizedBox(height: 8),
+          Text('Modèle prêt',
+              style: TextStyle(color: Colors.white.withOpacity(0.8),
+                  fontSize: 15)),
+        ]);
+
+      // ✅ NON-BLOQUANT — affiche un avertissement mais continue
+      case ModelLoadState.unavailable:
+        return Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.warning_amber_rounded,
+              color: Colors.amber[300], size: 26),
+          const SizedBox(height: 8),
+          Text('Modèle non disponible',
+              style: TextStyle(color: Colors.amber[200], fontSize: 15)),
+          const SizedBox(height: 4),
+          Text('Le scanner sera activé à la livraison',
+              style: TextStyle(
+                  color: Colors.white.withOpacity(0.5), fontSize: 12)),
+        ]);
+
+      case ModelLoadState.error:
+        return Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.info_outline_rounded,
+              color: Colors.white.withOpacity(0.7), size: 24),
+          const SizedBox(height: 8),
+          Text('Démarrage sans modèle',
+              style: TextStyle(color: Colors.white.withOpacity(0.65),
+                  fontSize: 14)),
+        ]);
+
+      default:
+        return const SizedBox(height: 48);
+    }
   }
 }

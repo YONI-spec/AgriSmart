@@ -1,17 +1,19 @@
 // lib/core/services/tflite_loader.dart
-// Chargement du modèle TFLite au démarrage
+// Chargement du modèle TFLite — NON-BLOQUANT si modèle absent
+// L'app démarre normalement, le scanner affiche "Modèle non disponible"
 
+import 'dart:developer' as dev;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
-// État du chargement
-enum ModelLoadState { idle, loading, ready, error }
+enum ModelLoadState { idle, loading, ready, unavailable, error }
 
 class TfliteLoaderNotifier extends StateNotifier<ModelLoadState> {
   TfliteLoaderNotifier() : super(ModelLoadState.idle);
 
   Interpreter? _interpreter;
   Interpreter? get interpreter => _interpreter;
+  bool get isReady => state == ModelLoadState.ready && _interpreter != null;
 
   Future<void> loadModel() async {
     state = ModelLoadState.loading;
@@ -21,9 +23,12 @@ class TfliteLoaderNotifier extends StateNotifier<ModelLoadState> {
         options: InterpreterOptions()..threads = 2,
       );
       state = ModelLoadState.ready;
+      dev.log('✅ Modèle TFLite chargé', name: 'TFLite');
     } catch (e) {
-      state = ModelLoadState.error;
-      rethrow;
+      dev.log('⚠️  Modèle absent ou corrompu : $e', name: 'TFLite');
+      // NON-BLOQUANT : l'app continue, le scanner sera désactivé
+      state = ModelLoadState.unavailable;
+      // Ne pas rethrow — on laisse l'app démarrer
     }
   }
 

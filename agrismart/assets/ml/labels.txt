@@ -1,0 +1,5 @@
+Bacterienne
+Fongique
+Parasitaire
+Saine
+Virale

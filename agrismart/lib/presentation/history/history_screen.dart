@@ -1,35 +1,45 @@
 // lib/presentation/history/history_screen.dart
-// Historique des scans — tous les diagnostics de l'agriculteur
-// (Remplace l'onglet Parcelles qui passe sur le logiciel drone)
+// Sprint 2 — branché sur SQLite + suivi longitudinal par zone
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
 import '../../core/widgets/agri_widgets.dart';
+import '../../data/local/scan_dao.dart';
+import '../../domain/entities/scan_result.dart';
 
-class HistoryScreen extends StatefulWidget {
+// ── Provider SQLite ───────────────────────────────────────────────
+final allScansProvider = FutureProvider<List<ScanResult>>((ref) async {
+  return ScanDao.instance.getAllScans();
+});
+
+final tagZonesProvider = FutureProvider<List<String>>((ref) async {
+  return ScanDao.instance.getAllTagZones();
+});
+
+class HistoryScreen extends ConsumerStatefulWidget {
   const HistoryScreen({super.key});
 
   @override
-  State<HistoryScreen> createState() => _HistoryScreenState();
+  ConsumerState<HistoryScreen> createState() => _HistoryScreenState();
 }
 
-class _HistoryScreenState extends State<HistoryScreen> {
-  SeverityLevel? _filterLevel; // null = tout afficher
+class _HistoryScreenState extends ConsumerState<HistoryScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
 
-  // Données simulées — sera remplacé par SQLite en Sprint 2
-  final List<_ScanEntry> _scans = [
-    _ScanEntry('Mildiou',        'Tomate',  0.92, SeverityLevel.danger,  'Aujourd\'hui, 09h14'),
-    _ScanEntry('Plante saine',   'Maïs',    0.87, SeverityLevel.healthy, 'Hier, 16h30'),
-    _ScanEntry('Oïdium précoce', 'Piment',  0.68, SeverityLevel.warning, '12 mars, 11h00'),
-    _ScanEntry('Plante saine',   'Haricot', 0.91, SeverityLevel.healthy, '11 mars, 08h22'),
-    _ScanEntry('Rouille',        'Tomate',  0.78, SeverityLevel.danger,  '10 mars, 14h05'),
-    _ScanEntry('Plante saine',   'Maïs',    0.95, SeverityLevel.healthy, '09 mars, 07h50'),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
 
-  List<_ScanEntry> get _filtered => _filterLevel == null
-      ? _scans
-      : _scans.where((s) => s.severity == _filterLevel).toList();
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -37,70 +47,96 @@ class _HistoryScreenState extends State<HistoryScreen> {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Historique'),
-        actions: [
-          // Bouton filtre
-          IconButton(
-            onPressed: () => _showFilterSheet(context),
-            icon: Stack(
-              children: [
-                const Icon(Icons.filter_list_rounded),
-                if (_filterLevel != null)
-                  Positioned(
-                    right: 0, top: 0,
-                    child: Container(
-                      width: 8, height: 8,
-                      decoration: BoxDecoration(
-                        color: _filterLevel!.color,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: AppColors.primary,
+          labelColor: AppColors.primary,
+          unselectedLabelColor: AppColors.textTertiary,
+          tabs: const [
+            Tab(text: 'Tous les scans'),
+            Tab(text: 'Suivi zones'),
+          ],
+        ),
       ),
-      body: Column(
-        children: [
-          // ── Résumé compteurs ────────────────────────────────
-          _ScanSummaryBar(scans: _scans),
-
-          // ── Liste ───────────────────────────────────────────
-          Expanded(
-            child: _filtered.isEmpty
-                ? _EmptyState()
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 100),
-                    itemCount: _filtered.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (context, i) {
-                      final s = _filtered[i];
-                      return DiagnosticCard(
-                        diseaseName: s.disease,
-                        plantName: s.plant,
-                        confidence: s.confidence,
-                        severity: s.severity,
-                        dateLabel: s.date,
-                        onTap: () {},
-                      );
-                    },
-                  ),
-          ),
+      body: TabBarView(
+        controller: _tabController,
+        children: const [
+          _AllScansTab(),
+          _ZoneTrackingTab(),
         ],
       ),
     );
   }
+}
 
-  void _showFilterSheet(BuildContext context) {
+// ── Onglet 1 : Tous les scans ─────────────────────────────────────
+class _AllScansTab extends ConsumerStatefulWidget {
+  const _AllScansTab();
+
+  @override
+  ConsumerState<_AllScansTab> createState() => _AllScansTabState();
+}
+
+class _AllScansTabState extends ConsumerState<_AllScansTab> {
+  SeverityLevel? _filter;
+
+  @override
+  Widget build(BuildContext context) {
+    final scansAsync = ref.watch(allScansProvider);
+
+    return scansAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('Erreur : $e')),
+      data: (scans) {
+        final filtered = _filter == null
+            ? scans
+            : scans.where((s) => s.severity == _filter).toList();
+
+        return Column(
+          children: [
+            // Barre résumé + filtre
+            _ScanSummaryBar(
+              scans: scans,
+              currentFilter: _filter,
+              onFilterTap: () => _showFilter(context, scans),
+            ),
+            // Liste
+            Expanded(
+              child: filtered.isEmpty
+                  ? _EmptyState()
+                  : ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 100),
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (_, i) {
+                        final s = filtered[i];
+                        return DiagnosticCard(
+                          diseaseName: s.disease,
+                          plantName: s.plantName ?? 'Plante',
+                          confidence: s.confidence,
+                          severity: _toWidgetSeverity(s.severity),
+                          dateLabel: _formatDate(s.capturedAt),
+                          onTap: () {},
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showFilter(BuildContext context, List<ScanResult> scans) {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (_) => _FilterSheet(
-        current: _filterLevel,
-        onSelect: (level) {
-          setState(() => _filterLevel = level);
+        current: _filter,
+        onSelect: (f) {
+          setState(() => _filter = f);
           Navigator.pop(context);
         },
       ),
@@ -108,33 +144,287 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 }
 
-// ── Barre de résumé ───────────────────────────────────────────────
-class _ScanSummaryBar extends StatelessWidget {
-  const _ScanSummaryBar({required this.scans});
-  final List<_ScanEntry> scans;
+// ── Onglet 2 : Suivi longitudinal par zone ────────────────────────
+class _ZoneTrackingTab extends ConsumerWidget {
+  const _ZoneTrackingTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final zonesAsync = ref.watch(tagZonesProvider);
+
+    return zonesAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(child: Text('Erreur : $e')),
+      data: (zones) => zones.isEmpty
+          ? _EmptyZonesState()
+          : ListView.separated(
+              padding: const EdgeInsets.all(20),
+              itemCount: zones.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              itemBuilder: (_, i) => _ZoneCard(tagZone: zones[i]),
+            ),
+    );
+  }
+}
+
+class _ZoneCard extends ConsumerWidget {
+  const _ZoneCard({required this.tagZone});
+  final String tagZone;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scansAsync = ref.watch(
+      FutureProvider((ref) => ScanDao.instance.getScansByZone(tagZone)),
+    );
+
+    return scansAsync.when(
+      loading: () => const SizedBox(height: 80,
+          child: Center(child: CircularProgressIndicator())),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (scans) {
+        if (scans.isEmpty) return const SizedBox.shrink();
+
+        final latest = scans.last;
+        final earliest = scans.first;
+        final latestPct = (latest.confidence * 100).toInt();
+        final firstPct = (earliest.confidence * 100).toInt();
+        final trend = latestPct - firstPct;
+
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppColors.border),
+          ),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header zone
+              Row(
+                children: [
+                  Icon(Icons.location_on_rounded,
+                      color: AppColors.primary, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(tagZone, style: AppTextStyles.titleMedium),
+                  ),
+                  _TrendBadge(trend: trend),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${scans.length} scan${scans.length > 1 ? 's' : ''} · '
+                '${_formatDate(earliest.capturedAt)} → ${_formatDate(latest.capturedAt)}',
+                style: AppTextStyles.labelSmall,
+              ),
+              const SizedBox(height: 14),
+
+              // Mini courbe d'évolution
+              _EvolutionChart(scans: scans),
+
+              const SizedBox(height: 10),
+
+              // Dernière maladie détectée
+              Row(
+                children: [
+                  Text('Dernier diagnostic : ',
+                      style: AppTextStyles.labelLarge),
+                  Text(
+                    latest.disease,
+                    style: AppTextStyles.bodySemiBold.copyWith(
+                      color: _severityColor(latest.severity),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Color _severityColor(SeverityLevel s) {
+    switch (s) {
+      case SeverityLevel.healthy: return AppColors.healthy;
+      case SeverityLevel.warning: return AppColors.warning;
+      case SeverityLevel.danger:  return AppColors.danger;
+      default: return AppColors.textSecondary;
+    }
+  }
+}
+
+// ── Mini courbe d'évolution ───────────────────────────────────────
+class _EvolutionChart extends StatelessWidget {
+  const _EvolutionChart({required this.scans});
+  final List<ScanResult> scans;
 
   @override
   Widget build(BuildContext context) {
-    final total   = scans.length;
+    if (scans.length < 2) {
+      return Container(
+        height: 60,
+        decoration: BoxDecoration(
+          color: AppColors.background,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Center(
+          child: Text('Scannez à nouveau pour voir l\'évolution',
+              style: AppTextStyles.labelSmall),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 60,
+      child: CustomPaint(
+        painter: _ChartPainter(scans: scans),
+        size: const Size(double.infinity, 60),
+      ),
+    );
+  }
+}
+
+class _ChartPainter extends CustomPainter {
+  const _ChartPainter({required this.scans});
+  final List<ScanResult> scans;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (scans.length < 2) return;
+
+    final bgPaint = Paint()
+      ..color = AppColors.background
+      ..style = PaintingStyle.fill;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Offset.zero & size, const Radius.circular(10),
+      ),
+      bgPaint,
+    );
+
+    final n = scans.length;
+    final points = <Offset>[];
+
+    for (int i = 0; i < n; i++) {
+      final x = (i / (n - 1)) * size.width;
+      final y = size.height - (scans[i].confidence * (size.height - 12)) - 6;
+      points.add(Offset(x, y));
+    }
+
+    // Zone remplie
+    final fillPath = Path()..moveTo(points.first.dx, size.height);
+    for (final p in points) fillPath.lineTo(p.dx, p.dy);
+    fillPath.lineTo(points.last.dx, size.height);
+    fillPath.close();
+
+    canvas.drawPath(
+      fillPath,
+      Paint()..color = AppColors.primary.withOpacity(0.12),
+    );
+
+    // Ligne
+    final linePath = Path()..moveTo(points.first.dx, points.first.dy);
+    for (int i = 1; i < points.length; i++) linePath.lineTo(points[i].dx, points[i].dy);
+
+    canvas.drawPath(
+      linePath,
+      Paint()
+        ..color = AppColors.primary
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+
+    // Points
+    for (final p in points) {
+      canvas.drawCircle(p, 4, Paint()..color = Colors.white);
+      canvas.drawCircle(p, 3, Paint()..color = AppColors.primary);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ChartPainter old) => old.scans != scans;
+}
+
+// ── Widgets utilitaires ───────────────────────────────────────────
+
+class _TrendBadge extends StatelessWidget {
+  const _TrendBadge({required this.trend});
+  final int trend;
+
+  @override
+  Widget build(BuildContext context) {
+    final isUp    = trend > 0;
+    final isFlat  = trend == 0;
+    final color   = isFlat ? AppColors.textTertiary
+        : isUp ? AppColors.danger : AppColors.healthy;
+    final icon    = isFlat ? Icons.remove_rounded
+        : isUp ? Icons.trending_up_rounded : Icons.trending_down_rounded;
+    final label   = isFlat ? '=' : '${isUp ? '+' : ''}$trend%';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 3),
+          Text(label, style: TextStyle(
+            fontSize: 12, fontWeight: FontWeight.w700, color: color,
+          )),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScanSummaryBar extends StatelessWidget {
+  const _ScanSummaryBar({
+    required this.scans,
+    required this.currentFilter,
+    required this.onFilterTap,
+  });
+  final List<ScanResult> scans;
+  final SeverityLevel? currentFilter;
+  final VoidCallback onFilterTap;
+
+  @override
+  Widget build(BuildContext context) {
     final healthy = scans.where((s) => s.severity == SeverityLevel.healthy).length;
     final warning = scans.where((s) => s.severity == SeverityLevel.warning).length;
     final danger  = scans.where((s) => s.severity == SeverityLevel.danger).length;
 
     return Container(
       margin: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppColors.border),
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _SummaryChip(count: total,   label: 'Total',    color: AppColors.textSecondary),
-          _SummaryChip(count: healthy, label: 'Sains',    color: AppColors.healthy),
-          _SummaryChip(count: warning, label: 'Attention',color: AppColors.warning),
-          _SummaryChip(count: danger,  label: 'Danger',   color: AppColors.danger),
+          _SummaryChip(count: scans.length, label: 'Total', color: AppColors.textSecondary),
+          _SummaryChip(count: healthy, label: 'Sains',     color: AppColors.healthy),
+          _SummaryChip(count: warning, label: 'Attention', color: AppColors.warning),
+          _SummaryChip(count: danger,  label: 'Danger',    color: AppColors.danger),
+          const Spacer(),
+          GestureDetector(
+            onTap: onFilterTap,
+            child: Icon(
+              Icons.filter_list_rounded,
+              color: currentFilter != null
+                  ? AppColors.primary
+                  : AppColors.textTertiary,
+            ),
+          ),
         ],
       ),
     );
@@ -142,30 +432,23 @@ class _ScanSummaryBar extends StatelessWidget {
 }
 
 class _SummaryChip extends StatelessWidget {
-  const _SummaryChip({
-    required this.count,
-    required this.label,
-    required this.color,
-  });
-  final int count;
-  final String label;
-  final Color color;
+  const _SummaryChip({required this.count, required this.label, required this.color});
+  final int count; final String label; final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          '$count',
-          style: AppTextStyles.titleMedium.copyWith(color: color),
-        ),
-        Text(label, style: AppTextStyles.labelSmall),
-      ],
+    return Padding(
+      padding: const EdgeInsets.only(right: 14),
+      child: Column(
+        children: [
+          Text('$count', style: AppTextStyles.titleMedium.copyWith(color: color)),
+          Text(label, style: AppTextStyles.labelSmall),
+        ],
+      ),
     );
   }
 }
 
-// ── Sheet de filtre ───────────────────────────────────────────────
 class _FilterSheet extends StatelessWidget {
   const _FilterSheet({required this.current, required this.onSelect});
   final SeverityLevel? current;
@@ -176,127 +459,83 @@ class _FilterSheet extends StatelessWidget {
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Filtrer par sévérité', style: AppTextStyles.titleMedium),
-            const SizedBox(height: 16),
-            _FilterTile(
-              label: 'Tous les scans',
-              icon: Icons.list_rounded,
-              color: AppColors.textSecondary,
-              selected: current == null,
-              onTap: () => onSelect(null),
-            ),
-            _FilterTile(
-              label: 'Sain',
-              icon: Icons.check_circle_rounded,
-              color: AppColors.healthy,
-              selected: current == SeverityLevel.healthy,
-              onTap: () => onSelect(SeverityLevel.healthy),
-            ),
-            _FilterTile(
-              label: 'Attention',
-              icon: Icons.warning_rounded,
-              color: AppColors.warning,
-              selected: current == SeverityLevel.warning,
-              onTap: () => onSelect(SeverityLevel.warning),
-            ),
-            _FilterTile(
-              label: 'Danger',
-              icon: Icons.dangerous_rounded,
-              color: AppColors.danger,
-              selected: current == SeverityLevel.danger,
-              onTap: () => onSelect(SeverityLevel.danger),
-            ),
-          ],
-        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('Filtrer', style: AppTextStyles.titleMedium),
+          const SizedBox(height: 16),
+          _FilterTile(null,             'Tous',      Icons.list_rounded,          AppColors.textSecondary, current, onSelect),
+          _FilterTile(SeverityLevel.healthy, 'Sain', Icons.check_circle_rounded, AppColors.healthy, current, onSelect),
+          _FilterTile(SeverityLevel.warning, 'Attention', Icons.warning_rounded, AppColors.warning, current, onSelect),
+          _FilterTile(SeverityLevel.danger,  'Danger',  Icons.dangerous_rounded,  AppColors.danger,  current, onSelect),
+        ]),
       ),
     );
   }
 }
 
-class _FilterTile extends StatelessWidget {
-  const _FilterTile({
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.selected,
-    required this.onTap,
-  });
-  final String label;
-  final IconData icon;
-  final Color color;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: selected ? color.withOpacity(0.08) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selected ? color.withOpacity(0.4) : AppColors.border,
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: color, size: 22),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(label, style: AppTextStyles.bodySemiBold),
-            ),
-            if (selected)
-              Icon(Icons.check_rounded, color: color, size: 20),
-          ],
-        ),
+Widget _FilterTile(
+  SeverityLevel? level, String label, IconData icon, Color color,
+  SeverityLevel? current, ValueChanged<SeverityLevel?> onSelect,
+) {
+  final selected = current == level;
+  return GestureDetector(
+    onTap: () => onSelect(level),
+    child: Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: selected ? color.withOpacity(0.08) : Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: selected ? color.withOpacity(0.4) : AppColors.border),
       ),
-    );
-  }
+      child: Row(children: [
+        Icon(icon, color: color, size: 22),
+        const SizedBox(width: 12),
+        Expanded(child: Text(label, style: AppTextStyles.bodySemiBold)),
+        if (selected) Icon(Icons.check_rounded, color: color, size: 20),
+      ]),
+    ),
+  );
 }
 
-// ── État vide ─────────────────────────────────────────────────────
 class _EmptyState extends StatelessWidget {
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.search_off_rounded,
-            size: 64,
-            color: AppColors.textTertiary,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Aucun scan pour ce filtre',
-            style: AppTextStyles.bodyLarge,
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Center(
+    child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.search_off_rounded, size: 56, color: AppColors.textTertiary),
+      const SizedBox(height: 12),
+      Text('Aucun scan', style: AppTextStyles.bodyLarge),
+    ]),
+  );
 }
 
-// ── Modèle local (remplacé par entité SQLite en Sprint 2) ─────────
-class _ScanEntry {
-  const _ScanEntry(
-    this.disease,
-    this.plant,
-    this.confidence,
-    this.severity,
-    this.date,
+class _EmptyZonesState extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.location_off_rounded, size: 56, color: AppColors.textTertiary),
+        const SizedBox(height: 16),
+        Text('Aucune zone étiquetée', style: AppTextStyles.titleMedium),
+        const SizedBox(height: 8),
+        Text(
+          'Après un scan, étiquetez une zone (ex: "Tomate Rang 3") '
+          'pour suivre l\'évolution de la maladie dans le temps.',
+          style: AppTextStyles.bodyMedium,
+          textAlign: TextAlign.center,
+        ),
+      ]),
+    ),
   );
-  final String disease;
-  final String plant;
-  final double confidence;
-  final SeverityLevel severity;
-  final String date;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────
+SeverityLevel _toWidgetSeverity(SeverityLevel s) => s;
+
+String _formatDate(DateTime dt) {
+  final now = DateTime.now();
+  final diff = now.difference(dt);
+  if (diff.inDays == 0) return 'Aujourd\'hui';
+  if (diff.inDays == 1) return 'Hier';
+  return '${dt.day}/${dt.month}/${dt.year}';
 }
