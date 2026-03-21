@@ -1,85 +1,69 @@
 // lib/data/ml/image_preprocessor.dart
-// Preprocessing image — supporte Float32 ET Int8 selon le modèle
+// Preprocessing pour MobileNetV3Small quantifié int8
+//
+// Entraîné avec : img = (img / 127.5) - 1.0  → [-1.0, 1.0]
+// TFLite int8 quantifié attend : int8 = round((float - zero_point) / scale)
+//
+// MAIS : avec converter.inference_input_type = tf.int8,
+// TFLite attend directement les int8 quantifiés depuis [-1,1].
+// La formule de quantification de MobileNetV3 donne :
+//   scale ≈ 1/128, zero_point = 0
+//   donc : int8 = clamp(round(float * 128), -128, 127)
+// Ce qui équivaut à : pixel → (pixel / 127.5 - 1.0) * 128
+// Simplifié      : int8 = pixel - 128  (approximation valide)
 
 import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 
-enum TensorType { float32, int8 }
-
 class ImagePreprocessor {
-  static const int inputSize = 160;
+  static const int inputSize = 224;
 
-  /// Retourne un Int8List normalisé [-128, 127] pour modèle quantifié int8
-  static Int8List preprocessInt8(Uint8List imageBytes) {
-    final image = img.decodeImage(imageBytes);
-    if (image == null) throw Exception('Impossible de décoder l\'image');
-
-    final resized = img.copyResize(
-      image,
-      width: inputSize,
-      height: inputSize,
-      interpolation: img.Interpolation.linear,
-    );
-
-    // Int8 quantifié : pixel [0,255] → [-128, 127]
-    // Formule : int8_value = pixel - 128
-    final input = Int8List(inputSize * inputSize * 3);
-    int idx = 0;
-    for (int y = 0; y < inputSize; y++) {
-      for (int x = 0; x < inputSize; x++) {
-        final pixel = resized.getPixelSafe(x, y) as img.Pixel;
-        input[idx++] = (pixel.r - 128).clamp(-128, 127).toInt();
-        input[idx++] = (pixel.g - 128).clamp(-128, 127).toInt();
-        input[idx++] = (pixel.b - 128).clamp(-128, 127).toInt();
-      }
-    }
-    return input;
-  }
-
-  /// Retourne un Float32List normalisé [0.0, 1.0] pour modèle non quantifié
-  static Float32List preprocessFloat32(Uint8List imageBytes) {
-    final image = img.decodeImage(imageBytes);
-    if (image == null) throw Exception('Impossible de décoder l\'image');
-
-    final resized = img.copyResize(
-      image,
-      width: inputSize,
-      height: inputSize,
-      interpolation: img.Interpolation.linear,
-    );
-
-    final input = Float32List(inputSize * inputSize * 3);
-    int idx = 0;
-    for (int y = 0; y < inputSize; y++) {
-      for (int x = 0; x < inputSize; x++) {
-        final pixel = resized.getPixelSafe(x, y) as img.Pixel;
-        input[idx++] = pixel.r / 255.0;
-        input[idx++] = pixel.g / 255.0;
-        input[idx++] = pixel.b / 255.0;
-      }
-    }
-    return input;
-  }
-
-  /// Reshape Int8 → List 4D pour tflite_flutter
-  static List<List<List<List<int>>>> reshapeInt8(Int8List flat) {
+  /// Pour MobileNetV3 quantifié int8 entraîné avec (pixel/127.5 - 1.0)
+  /// Formule : int8_value = pixel - 128
+  /// Résultat shape [1, 224, 224, 3] de type int
+  static List<List<List<List<int>>>> prepareMobileNetV3Int8(
+      Uint8List imageBytes) {
+    final resized = _resize(imageBytes);
     return List.generate(1, (_) =>
       List.generate(inputSize, (y) =>
-        List.generate(inputSize, (x) =>
-          List.generate(3, (c) => flat[(y * inputSize + x) * 3 + c]),
-        ),
+        List.generate(inputSize, (x) {
+          final pixel = resized.getPixel(x, y);
+          return [
+            (pixel.r.toInt() - 128).clamp(-128, 127),
+            (pixel.g.toInt() - 128).clamp(-128, 127),
+            (pixel.b.toInt() - 128).clamp(-128, 127),
+          ];
+        }),
       ),
     );
   }
 
-  /// Reshape Float32 → List 4D pour tflite_flutter
-  static List<List<List<List<double>>>> reshapeFloat32(Float32List flat) {
+  /// Pour modèle float32 entraîné avec (pixel/127.5 - 1.0)
+  static List<List<List<List<double>>>> prepareMobileNetV3Float(
+      Uint8List imageBytes) {
+    final resized = _resize(imageBytes);
     return List.generate(1, (_) =>
       List.generate(inputSize, (y) =>
-        List.generate(inputSize, (x) =>
-          List.generate(3, (c) => flat[(y * inputSize + x) * 3 + c]),
-        ),
+        List.generate(inputSize, (x) {
+          final pixel = resized.getPixel(x, y);
+          return [
+            pixel.r / 127.5 - 1.0,
+            pixel.g / 127.5 - 1.0,
+            pixel.b / 127.5 - 1.0,
+          ];
+        }),
       ),
+    );
+  }
+
+  static img.Image _resize(Uint8List bytes) {
+    final image = img.decodeImage(bytes);
+    if (image == null) throw Exception('Image invalide');
+    return img.copyResize(
+      image,
+      width: inputSize,
+      height: inputSize,
+      interpolation: img.Interpolation.linear,
     );
   }
 }

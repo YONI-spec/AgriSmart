@@ -1,10 +1,10 @@
 // lib/core/services/tflite_loader.dart
-// Chargement du modèle TFLite — NON-BLOQUANT si modèle absent
-// L'app démarre normalement, le scanner affiche "Modèle non disponible"
+// Charge le modèle TFLite et initialise MlService
 
 import 'dart:developer' as dev;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
+import '../../data/ml/ml_service.dart';
 
 enum ModelLoadState { idle, loading, ready, unavailable, error }
 
@@ -13,7 +13,6 @@ class TfliteLoaderNotifier extends StateNotifier<ModelLoadState> {
 
   Interpreter? _interpreter;
   Interpreter? get interpreter => _interpreter;
-  bool get isReady => state == ModelLoadState.ready && _interpreter != null;
 
   Future<void> loadModel() async {
     state = ModelLoadState.loading;
@@ -22,13 +21,24 @@ class TfliteLoaderNotifier extends StateNotifier<ModelLoadState> {
         'assets/ml/agrismart.tflite',
         options: InterpreterOptions()..threads = 2,
       );
+
+      // Initialiser MlService avec l'interpreter chargé
+      MlService.instance.init(_interpreter!);
+
+      // Log des dimensions pour vérification
+      final inputShape  = _interpreter!.getInputTensor(0).shape;
+      final outputShape = _interpreter!.getOutputTensor(0).shape;
+      final inputType   = _interpreter!.getInputTensor(0).type;
+      final outputType  = _interpreter!.getOutputTensor(0).type;
+
+      dev.log('✅ Modèle chargé', name: 'TFLite');
+      dev.log('   Input  : $inputShape — $inputType', name: 'TFLite');
+      dev.log('   Output : $outputShape — $outputType', name: 'TFLite');
+
       state = ModelLoadState.ready;
-      dev.log('✅ Modèle TFLite chargé', name: 'TFLite');
     } catch (e) {
-      dev.log('⚠️  Modèle absent ou corrompu : $e', name: 'TFLite');
-      // NON-BLOQUANT : l'app continue, le scanner sera désactivé
+      dev.log('⚠️  Modèle absent : $e', name: 'TFLite');
       state = ModelLoadState.unavailable;
-      // Ne pas rethrow — on laisse l'app démarrer
     }
   }
 
